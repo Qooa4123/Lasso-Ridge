@@ -9,6 +9,10 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, ConfusionMatrixDisplay
 from sklearn.metrics import confusion_matrix, classification_report, f1_score
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 # 定義評估函式
 def get_metrics(model, X, Y, name):
     Y_pred = model.predict(X)
@@ -25,19 +29,17 @@ def get_metrics(model, X, Y, name):
 
 
 # 載入
-df = pd.read_excel('final_data.xlsx')
+df = pd.read_excel(r'D:\派森\Lasso & Ridge\final_data.xlsx', sheet_name='工作表2')
+df.columns = df.columns.str.strip()
 
 
 # 設定應變量&自變量
-Feature = ['1W_Rev', '1M_Rev', 'Mom_3M', 'Mom_6M', 'Mom_12M_1M', 'Vol_20D', 
+Features = ['1W_Rev', '1M_Rev', 'Mom_3M', 'Mom_6M', 'Mom_12M_1M', 'Vol_20D', 
             'Vol_60D', 'Vol_Down', 'Turnover', 'Turnover_Chg', 'Amihud', 'Vol_Z', 
-            'Zero_Days', 'MA20_Bias', 'MA60_Bias', 'MACD', 'BB_Pos', 'RSI', 
+            'MA20_Bias', 'MA60_Bias', 'MACD', 'BB_Pos', 'RSI', 
             'ROE', 'Sales_Growth', 'Asset_Growth', 'Accruals']
 
-X = df['1W_Rev', '1M_Rev', 'Mom_3M', 'Mom_6M', 'Mom_12M_1M', 'Vol_20D', 
-            'Vol_60D', 'Vol_Down', 'Turnover', 'Turnover_Chg', 'Amihud', 'Vol_Z', 
-            'Zero_Days', 'MA20_Bias', 'MA60_Bias', 'MACD', 'BB_Pos', 'RSI', 
-            'ROE', 'Sales_Growth', 'Asset_Growth', 'Accruals']
+X = df[Features]
 Y = df['RR<0.1']
 
 
@@ -60,7 +62,7 @@ pipe = Pipeline([
 ])
 
 
-# GridSearchCV 切割與標準化(先用accuracy跟neg_log_loss評分)
+# GridSearchCV 切割與標準化(用accuracy、neg_log_loss、f1評分)
 param_grid = {'model__C': np.logspace(-4, 4, 20)}
 grid_search_accuracy = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring='accuracy')
 grid_search_neg_log_loss = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring='neg_log_loss')
@@ -98,7 +100,7 @@ n = X_train.shape[0]
 p = X_train.shape[1]
 c = 1.1
 lambda_theory = c*np.sqrt(np.log(p) / n)
-c_theory = 1 / lambda_theory
+c_theory = 1 / (n*lambda_theory)
 
 # 訓練理論模型
 theory_lasso_pipe = Pipeline([
@@ -117,6 +119,7 @@ theory_metrics, theory_cm = get_metrics(theory_lasso_pipe, X_test, Y_test, "Lass
 
 
 #============彙整結果表格==========
+
 results_df = pd.DataFrame([cv_metrics_accuracy, cv_metrics_neg_log_loss, cv_metrics_f1, theory_metrics])
 print(results_df)
 
@@ -125,3 +128,39 @@ print("\nConfusion Matrix accuracy(CV):\n", cv_cm_accuracy)
 print("\nConfusion Matrix neg_log_loss(CV):\n", cv_cm_y_neg_log_loss)
 print("\nConfusion Matrix f1(CV):\n", cv_cm_f1)
 print("\nConfusion Matrix (Theory):\n", theory_cm)
+
+
+# 抓取測試集的預測機率
+probabilities_accuracy = best_pipeline_accuracy.predict_proba(X_test)[:, 1]
+probabilities_neg_log_loss = best_pipeline_neg_log_loss.predict_proba(X_test)[:, 1]
+probabilities_f1 = best_pipeline_f1.predict_proba(X_test)[:, 1]
+probabilities_theory = theory_lasso_pipe.predict_proba(X_test)[:, 1]
+
+# 將機率與實際標籤合併
+prob_df = pd.DataFrame({
+    'Actual_Y': Y_test.values,
+    'Predicted_Prob_ac': probabilities_accuracy,
+    'Predicted_Prob_nlog' : probabilities_neg_log_loss,
+    'Predicted_Prob_f1' : probabilities_f1,
+    'Predicted_Prob_theory' : probabilities_theory
+})
+
+
+# 統計描述：看看機率的最大值、最小值、平均值
+print("\n預測機率的統計描述：")
+print(prob_df[['Predicted_Prob_ac',
+    'Predicted_Prob_nlog',
+    'Predicted_Prob_f1',
+    'Predicted_Prob_theory']].describe().T)
+
+#觀察截距
+print(f"Accuracy 模型截距: {best_pipeline_accuracy.named_steps['model'].intercept_}")
+print(f"Log-loss 模型截距: {best_pipeline_neg_log_loss.named_steps['model'].intercept_}")
+print(f"F1 模型截距: {best_pipeline_f1.named_steps['model'].intercept_}")
+print(f"理論模型截距: {theory_lasso_pipe.named_steps['model'].intercept_}")
+
+#觀察C值
+print(f"Accuracy 最優 C 值: {grid_search_accuracy.best_params_['model__C']}")
+print(f"Log-loss 最優 C 值: {grid_search_neg_log_loss.best_params_['model__C']}")
+print(f"F1 最優 C 值: {grid_search_f1.best_params_['model__C']}")
+print(f"理論模型使用的 C 值 (1/(n*lambda)): {c_theory}")
