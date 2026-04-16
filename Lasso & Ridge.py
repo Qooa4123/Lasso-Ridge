@@ -146,21 +146,28 @@ prob_df = pd.DataFrame({
 })
 
 
-# 統計描述：看看機率的最大值、最小值、平均值
+# 看機率的最大值、最小值、平均值
 print("\n預測機率的統計描述：")
 print(prob_df[['Predicted_Prob_ac',
     'Predicted_Prob_nlog',
     'Predicted_Prob_f1',
     'Predicted_Prob_theory']].describe().T)
 
-#觀察截距
-print(f"Accuracy 模型截距: {best_pipeline_accuracy.named_steps['model'].intercept_}")
-print(f"Log-loss 模型截距: {best_pipeline_neg_log_loss.named_steps['model'].intercept_}")
-print(f"F1 模型截距: {best_pipeline_f1.named_steps['model'].intercept_}")
-print(f"理論模型截距: {theory_lasso_pipe.named_steps['model'].intercept_}")
-
-#觀察C值
-print(f"Accuracy 最優 C 值: {grid_search_accuracy.best_params_['model__C']}")
-print(f"Log-loss 最優 C 值: {grid_search_neg_log_loss.best_params_['model__C']}")
-print(f"F1 最優 C 值: {grid_search_f1.best_params_['model__C']}")
-print(f"理論模型使用的 C 值 (1/(n*lambda)): {c_theory}")
+#觀察模型截距與C值
+result_df_C_intcpt = pd.DataFrame({
+    'Model': ['Accuracy', 'Log-loss', 'F1', 'Theory'],
+    'Intercept': [
+        best_pipeline_accuracy.named_steps['model'].intercept_[0],
+        best_pipeline_neg_log_loss.named_steps['model'].intercept_[0],
+        best_pipeline_f1.named_steps['model'].intercept_[0],
+        theory_lasso_pipe.named_steps['model'].intercept_[0]
+    ],
+    'C': [
+        grid_search_accuracy.best_params_['model__C'],
+        grid_search_neg_log_loss.best_params_['model__C'],
+        grid_search_f1.best_params_['model__C'],
+        c_theory
+    ]
+})
+print("\n截距與C值：")
+print(result_df_C_intcpt.set_index('Model').T)
