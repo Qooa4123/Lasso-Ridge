@@ -210,7 +210,7 @@ scorers = ['accuracy', 'neg_log_loss', 'f1']
 # 建立過採樣器，會將少數類別增加到與多數類別數量一致
 ros = RandomOverSampler(random_state=1)
 
-# 2. 僅對訓練集進行過採樣
+# 僅對訓練集進行過採樣
 X_train_ros, Y_train_ros = ros.fit_resample(X_train, Y_train)
 
 
@@ -218,19 +218,19 @@ X_train_ros, Y_train_ros = ros.fit_resample(X_train, Y_train)
 ros_results = {}
 
 for sc in scorers:
-    # 1. 執行 GridSearchCV
+    #執行 GridSearchCV
     gs = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring=sc)
     gs.fit(X_train_ros, Y_train_ros)
     
-    # 2. 提取最佳模型與參數
+    #提取最佳模型與參數
     best_model = gs.best_estimator_
     best_c = gs.best_params_['model__C']
     
-    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
+    # 呼叫 get_metrics (產出 metrics 和 confusion matrix)
     # label 加上評分名稱方便辨識
     metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_ROS_{sc}")
     
-    # 4. 將所有物件打包存入字典
+    #打包存入字典
     ros_results[sc] = {
         'model': best_model,
         'metrics': metrics,
@@ -251,28 +251,27 @@ theory_ros_metrics, theory_ros_cm = get_metrics(
 )
 
 #SMOTE----------------------------------------------------------------------
-# 1. 建立 SMOTE 採樣器
+#建立 SMOTE 採樣器
 smote = SMOTE(random_state=42)
 
 smote_results = {}
 
-# 2. 僅對訓練集進行合成 (X_train, Y_train 是你原始的訓練集)
+#重複在ros的動作
 X_train_smote, Y_train_smote = smote.fit_resample(X_train, Y_train)
 
 for sc in scorers:
-    # 1. 執行 GridSearchCV
+    
     gs = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring=sc)
     gs.fit(X_train_smote, Y_train_smote)
     
-    # 2. 提取最佳模型與參數
+   
     best_model = gs.best_estimator_
     best_c = gs.best_params_['model__C']
     
-    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
-    # label 加上評分名稱方便辨識
+    
     metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_Smote_{sc}")
     
-    # 4. 將所有物件打包存入字典
+    
     smote_results[sc] = {
         'model': best_model,
         'metrics': metrics,
@@ -293,7 +292,6 @@ theory_smote_metrics, theory_smote_cm = get_metrics(
 
 #Class-weight Adjustment------------------------------------------
 #修改Pipeline：在 LogisticRegression 中加入 class_weight='balanced'
-
 weighted_results = {}
 
 pipe_weighted = Pipeline([
@@ -308,19 +306,18 @@ pipe_weighted = Pipeline([
 
 
 for sc in scorers:
-    # 1. 執行 GridSearchCV
+    
     gs = GridSearchCV(pipe_weighted, param_grid, cv=cv_stratified, scoring=sc)
     gs.fit(X_train, Y_train)
     
-    # 2. 提取最佳模型與參數
+    
     best_model = gs.best_estimator_
     best_c = gs.best_params_['model__C']
     
-    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
-    # label 加上評分名稱方便辨識
+    
     metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_Weighted_{sc}")
     
-    # 4. 將所有物件打包存入字典
+    
     weighted_results[sc] = {
         'model': best_model,
         'metrics': metrics,
