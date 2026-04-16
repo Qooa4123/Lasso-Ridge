@@ -2,11 +2,10 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegressionCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score, ConfusionMatrixDisplay
 from sklearn.metrics import confusion_matrix, classification_report, f1_score
 from imblearn.over_sampling import RandomOverSampler
 from collections import Counter
@@ -21,6 +20,7 @@ def get_metrics(model, X, Y, name):
     Y_pred = model.predict(X)
     metrics = {
         'Model': name,
+        'Accuracy': accuracy_score(Y, Y_pred),
         'Precision': precision_score(Y, Y_pred, zero_division=0),
         'Recall': recall_score(Y, Y_pred),
         'F1-score': f1_score(Y, Y_pred),
