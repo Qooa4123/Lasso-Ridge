@@ -8,7 +8,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, ConfusionMatrixDisplay
 from sklearn.metrics import confusion_matrix, classification_report, f1_score
-
+from imblearn.over_sampling import RandomOverSampler
+from collections import Counter
+from imblearn.over_sampling import SMOTE
+from IPython.display import display
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -26,6 +29,24 @@ def get_metrics(model, X, Y, name):
     cm = confusion_matrix(Y, Y_pred)
     return metrics, cm
 
+#定義0、1數量比例函式
+def report_class_distribution(Y_train, Y_test):
+    # 計算數量
+    train_counts = Y_train.value_counts().sort_index()
+    test_counts = Y_test.value_counts().sort_index()
+    
+    # 計算比例
+    train_pct = Y_train.value_counts(normalize=True).sort_index() * 100
+    test_pct = Y_test.value_counts(normalize=True).sort_index() * 100
+    
+    # 整理成表格
+    dist_df = pd.DataFrame({
+        'Train Count': train_counts,
+        'Train %': train_pct,
+        'Test Count': test_counts,
+        'Test %': test_pct
+    })
+    return dist_df
 
 
 # 載入
@@ -118,7 +139,7 @@ theory_metrics, theory_cm = get_metrics(theory_lasso_pipe, X_test, Y_test, "Lass
 
 
 
-#============彙整結果表格==========
+#============彙整結果表格(Part 1 result)==========
 
 results_df = pd.DataFrame([cv_metrics_accuracy, cv_metrics_neg_log_loss, cv_metrics_f1, theory_metrics])
 print(results_df)
@@ -171,3 +192,207 @@ result_df_C_intcpt = pd.DataFrame({
 })
 print("\n截距與C值：")
 print(result_df_C_intcpt.set_index('Model').T)
+
+
+
+
+
+#================第二部分，檢視樣本Y比例不均的問題，採三種方法解決=================
+
+#先檢視訓練集跟測試集的Y(採分層抽樣，比例應該差不多)
+distribution_data = report_class_distribution(Y_train, Y_test)
+print(distribution_data)
+
+#評分標準列表
+scorers = ['accuracy', 'neg_log_loss', 'f1']
+
+#Random Oversampling--------------------------------------------------------
+# 建立過採樣器，會將少數類別增加到與多數類別數量一致
+ros = RandomOverSampler(random_state=1)
+
+# 2. 僅對訓練集進行過採樣
+X_train_ros, Y_train_ros = ros.fit_resample(X_train, Y_train)
+
+
+# 建立一個 dictionary 來存放 ROS 的所有結果
+ros_results = {}
+
+for sc in scorers:
+    # 1. 執行 GridSearchCV
+    gs = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring=sc)
+    gs.fit(X_train_ros, Y_train_ros)
+    
+    # 2. 提取最佳模型與參數
+    best_model = gs.best_estimator_
+    best_c = gs.best_params_['model__C']
+    
+    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
+    # label 加上評分名稱方便辨識
+    metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_ROS_{sc}")
+    
+    # 4. 將所有物件打包存入字典
+    ros_results[sc] = {
+        'model': best_model,
+        'metrics': metrics,
+        'cm': cm,
+        'best_C': best_c
+    }
+
+
+# 訓練理論模型
+theory_lasso_pipe_ros= Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', LogisticRegression(penalty='l1', solver='liblinear', C=c_theory))
+])
+theory_lasso_pipe_ros.fit(X_train_ros, Y_train_ros)
+
+theory_ros_metrics, theory_ros_cm = get_metrics(
+    theory_lasso_pipe_ros, X_test, Y_test, "Theory_Lasso_ros_Test"
+)
+
+#SMOTE----------------------------------------------------------------------
+# 1. 建立 SMOTE 採樣器
+smote = SMOTE(random_state=42)
+
+smote_results = {}
+
+# 2. 僅對訓練集進行合成 (X_train, Y_train 是你原始的訓練集)
+X_train_smote, Y_train_smote = smote.fit_resample(X_train, Y_train)
+
+for sc in scorers:
+    # 1. 執行 GridSearchCV
+    gs = GridSearchCV(pipe, param_grid, cv=cv_stratified, scoring=sc)
+    gs.fit(X_train_smote, Y_train_smote)
+    
+    # 2. 提取最佳模型與參數
+    best_model = gs.best_estimator_
+    best_c = gs.best_params_['model__C']
+    
+    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
+    # label 加上評分名稱方便辨識
+    metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_Smote_{sc}")
+    
+    # 4. 將所有物件打包存入字典
+    smote_results[sc] = {
+        'model': best_model,
+        'metrics': metrics,
+        'cm': cm,
+        'best_C': best_c
+    }
+
+# 訓練理論模型
+theory_lasso_pipe_smote= Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', LogisticRegression(penalty='l1', solver='liblinear', C=c_theory))
+])
+theory_lasso_pipe_smote.fit(X_train_smote, Y_train_smote)
+
+theory_smote_metrics, theory_smote_cm = get_metrics(
+    theory_lasso_pipe_smote, X_test, Y_test, "Theory_Lasso_smote_Test"
+)
+
+#Class-weight Adjustment------------------------------------------
+#修改Pipeline：在 LogisticRegression 中加入 class_weight='balanced'
+
+weighted_results = {}
+
+pipe_weighted = Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', LogisticRegression(
+        penalty='l1', 
+        solver='liblinear', 
+        class_weight='balanced', # <---(以樣本Y=1之比例進行加權)
+        random_state=1
+    ))
+])
+
+
+for sc in scorers:
+    # 1. 執行 GridSearchCV
+    gs = GridSearchCV(pipe_weighted, param_grid, cv=cv_stratified, scoring=sc)
+    gs.fit(X_train, Y_train)
+    
+    # 2. 提取最佳模型與參數
+    best_model = gs.best_estimator_
+    best_c = gs.best_params_['model__C']
+    
+    # 3. 呼叫 get_metrics (這裡會產出你的 metrics 和 confusion matrix)
+    # label 加上評分名稱方便辨識
+    metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_Weighted_{sc}")
+    
+    # 4. 將所有物件打包存入字典
+    weighted_results[sc] = {
+        'model': best_model,
+        'metrics': metrics,
+        'cm': cm,
+        'best_C': best_c
+    }
+
+# 訓練理論模型
+theory_lasso_pipe_weighted = Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', LogisticRegression(penalty='l1', solver='liblinear',class_weight='balanced', C=c_theory))
+])
+theory_lasso_pipe_weighted.fit(X_train, Y_train)
+
+theory_weighted_metrics, theory_weighted_cm = get_metrics(
+    theory_lasso_pipe_weighted, X_test, Y_test, "Theory_Lasso_Weighted_Test"
+)
+
+
+#==============印出調整過後的結果==============
+def compile_summary_table(all_results_dicts, theory_results_list):
+    summary_data = []
+
+    # 處理 CV 最佳化模型 (ROS, SMOTE, Weighted)
+    for method_name, results_dict in all_results_dicts.items():
+        for sc in ['accuracy', 'neg_log_loss', 'f1']:
+            res = results_dict[sc]
+            # 提取指標 
+            m = res['metrics']
+            # 計算選中變數
+            coef = res['model'].named_steps['model'].coef_[0]
+            num_vars = np.sum(coef != 0)
+
+            summary_data.append({
+                'Method': method_name,
+                'Scoring': sc,
+                'Best_C': res['best_C'],
+                'Selected_Vars': num_vars,
+                'Accuracy': m.get('accuracy', m.get('Accuracy', 0)),
+                'Precision': m.get('precision', m.get('Precision', 0)),
+                'Recall': m.get('recall', m.get('Recall', 0)),
+                'F1-score': m.get('f1-score', m.get('F1-score', 0))
+            })
+
+    # 處理各方法的理論模型
+    for t_name, t_metrics, t_pipe in theory_results_list:
+        coef_t = t_pipe.named_steps['model'].coef_[0]
+        num_vars_t = np.sum(coef_t != 0)
+
+        summary_data.append({
+            'Method': t_name,
+            'Scoring': 'Theory',
+            'Best_C': t_pipe.named_steps['model'].C,
+            'Selected_Vars': num_vars_t,
+            'Accuracy': t_metrics.get('accuracy', t_metrics.get('Accuracy', 0)),
+            'Precision': t_metrics.get('precision', t_metrics.get('Precision', 0)),
+            'Recall': t_metrics.get('recall', t_metrics.get('Recall', 0)),
+            'F1-score': t_metrics.get('f1-score', t_metrics.get('F1-score', 0))
+        })
+
+    return pd.DataFrame(summary_data)
+
+# 執行彙整
+all_dicts = {'ROS': ros_results, 'SMOTE': smote_results, 'Weighted': weighted_results}
+theory_list = [
+    ('ROS', theory_ros_metrics, theory_lasso_pipe_ros),
+    ('SMOTE', theory_smote_metrics, theory_lasso_pipe_smote), 
+    ('Weighted', theory_weighted_metrics, theory_lasso_pipe_weighted)
+]
+
+summary_df = compile_summary_table(all_dicts, theory_list)
+
+
+print("\n" + "="*40 + " Exercise 2 綜合績效比較表 " + "="*40)
+display(summary_df.sort_values(by=['Method', 'F1-score'], ascending=[True, False]))
