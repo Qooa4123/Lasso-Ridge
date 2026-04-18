@@ -11,6 +11,9 @@ from imblearn.over_sampling import RandomOverSampler
 from collections import Counter
 from imblearn.over_sampling import SMOTE
 from IPython.display import display
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -70,7 +73,7 @@ X_train, X_test, Y_train, Y_test = train_test_split(
 )
 
 
-#=============先用基本Lasso跑============
+#=============先用ridge跑============
 
 # 定義 CV 策略
 cv_stratified = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
@@ -79,7 +82,7 @@ cv_stratified = StratifiedKFold(n_splits=5, shuffle=True, random_state=1)
 # Pipeline 普通 LogisticRegression
 pipe = Pipeline([
     ('scaler', StandardScaler()),
-    ('model', LogisticRegression(penalty='l1', solver='liblinear'))
+    ('model', LogisticRegression(penalty='l2', solver='lbfgs'))
 ])
 
 
@@ -93,69 +96,34 @@ grid_search_accuracy.fit(X_train, Y_train)
 grid_search_neg_log_loss.fit(X_train, Y_train)
 grid_search_f1.fit(X_train, Y_train)
 
-
-# 回報 Lasso 選中的變數
-# 針對accuracy
+#選出最佳模型
 best_pipeline_accuracy = grid_search_accuracy.best_estimator_
-selected_coef_accuracy = best_pipeline_accuracy.named_steps['model'].coef_[0]
-selected_vars_accuracy = [Features[i] for i, coef in enumerate(selected_coef_accuracy) if coef != 0]
-print(f"Lasso Selected Variables by accuracy: {selected_vars_accuracy}")
-
-#針對neg_log_loss
 best_pipeline_neg_log_loss = grid_search_neg_log_loss.best_estimator_
-selected_coef_neg_log_loss = best_pipeline_neg_log_loss.named_steps['model'].coef_[0]
-selected_vars_neg_log_loss = [Features[i] for i, coef in enumerate(selected_coef_neg_log_loss) if coef != 0]
-print(f"Lasso Selected Variables by neg_log_loss: {selected_vars_neg_log_loss}")
-
-#針對f1
 best_pipeline_f1 = grid_search_f1.best_estimator_
-selected_coef_f1 = best_pipeline_f1.named_steps['model'].coef_[0]
-selected_vars_f1 = [Features[i] for i, coef in enumerate(selected_coef_f1) if coef != 0]
-print(f"Lasso Selected Variables by f1: {selected_vars_f1}")
 
 
-#===========用scaled lasso and square-root lasso跑============
-
-# 計算理論 Lambda，公式採簡化版，參考: lambda = c*sqrt(log(p)/n) , c 設為 1.1
-n = X_train.shape[0]
-p = X_train.shape[1]
-c = 1.1
-lambda_theory = c*np.sqrt(np.log(p) / n)
-c_theory = 1 / (n*lambda_theory)
-
-# 訓練理論模型
-theory_lasso_pipe = Pipeline([
-    ('scaler', StandardScaler()),
-    ('model', LogisticRegression(penalty='l1', solver='liblinear', C=c_theory))
-])
-theory_lasso_pipe.fit(X_train, Y_train)
-
-
-#==============取得兩者表現==============
-cv_metrics_accuracy, cv_cm_accuracy = get_metrics(best_pipeline_accuracy, X_test, Y_test, "Lasso_accuracy(CV)")
-cv_metrics_neg_log_loss, cv_cm_y_neg_log_loss = get_metrics(best_pipeline_neg_log_loss, X_test, Y_test, "Lasso_neg_log_loss(CV)")
-cv_metrics_f1, cv_cm_f1 = get_metrics(best_pipeline_f1, X_test, Y_test, "Lasso_f1(CV)")
-theory_metrics, theory_cm = get_metrics(theory_lasso_pipe, X_test, Y_test, "Lasso (Theory)")
+#==============取得表現==============
+cv_metrics_accuracy, cv_cm_accuracy = get_metrics(best_pipeline_accuracy, X_test, Y_test, "Ridge_accuracy(CV)")
+cv_metrics_neg_log_loss, cv_cm_y_neg_log_loss = get_metrics(best_pipeline_neg_log_loss, X_test, Y_test, "Ridge_neg_log_loss(CV)")
+cv_metrics_f1, cv_cm_f1 = get_metrics(best_pipeline_f1, X_test, Y_test, "Ridge_f1(CV)")
 
 
 
 #============彙整結果表格(Part 1 result)==========
 
-results_df = pd.DataFrame([cv_metrics_accuracy, cv_metrics_neg_log_loss, cv_metrics_f1, theory_metrics])
+results_df = pd.DataFrame([cv_metrics_accuracy, cv_metrics_neg_log_loss, cv_metrics_f1])
 print(results_df)
 
 # 顯示混淆矩陣
 print("\nConfusion Matrix accuracy(CV):\n", cv_cm_accuracy)
 print("\nConfusion Matrix neg_log_loss(CV):\n", cv_cm_y_neg_log_loss)
 print("\nConfusion Matrix f1(CV):\n", cv_cm_f1)
-print("\nConfusion Matrix (Theory):\n", theory_cm)
 
 
 # 抓取測試集的預測機率
 probabilities_accuracy = best_pipeline_accuracy.predict_proba(X_test)[:, 1]
 probabilities_neg_log_loss = best_pipeline_neg_log_loss.predict_proba(X_test)[:, 1]
 probabilities_f1 = best_pipeline_f1.predict_proba(X_test)[:, 1]
-probabilities_theory = theory_lasso_pipe.predict_proba(X_test)[:, 1]
 
 # 將機率與實際標籤合併
 prob_df = pd.DataFrame({
@@ -163,7 +131,6 @@ prob_df = pd.DataFrame({
     'Predicted_Prob_ac': probabilities_accuracy,
     'Predicted_Prob_nlog' : probabilities_neg_log_loss,
     'Predicted_Prob_f1' : probabilities_f1,
-    'Predicted_Prob_theory' : probabilities_theory
 })
 
 
@@ -171,23 +138,20 @@ prob_df = pd.DataFrame({
 print("\n預測機率的統計描述：")
 print(prob_df[['Predicted_Prob_ac',
     'Predicted_Prob_nlog',
-    'Predicted_Prob_f1',
-    'Predicted_Prob_theory']].describe().T)
+    'Predicted_Prob_f1',]].describe().T)
 
 #觀察模型截距與C值
 result_df_C_intcpt = pd.DataFrame({
-    'Model': ['Accuracy', 'Log-loss', 'F1', 'Theory'],
+    'Model': ['Accuracy', 'Log-loss', 'F1'],
     'Intercept': [
         best_pipeline_accuracy.named_steps['model'].intercept_[0],
         best_pipeline_neg_log_loss.named_steps['model'].intercept_[0],
         best_pipeline_f1.named_steps['model'].intercept_[0],
-        theory_lasso_pipe.named_steps['model'].intercept_[0]
     ],
     'C': [
         grid_search_accuracy.best_params_['model__C'],
         grid_search_neg_log_loss.best_params_['model__C'],
         grid_search_f1.best_params_['model__C'],
-        c_theory
     ]
 })
 print("\n截距與C值：")
@@ -239,17 +203,6 @@ for sc in scorers:
     }
 
 
-# 訓練理論模型
-theory_lasso_pipe_ros= Pipeline([
-    ('scaler', StandardScaler()),
-    ('model', LogisticRegression(penalty='l1', solver='liblinear', C=c_theory))
-])
-theory_lasso_pipe_ros.fit(X_train_ros, Y_train_ros)
-
-theory_ros_metrics, theory_ros_cm = get_metrics(
-    theory_lasso_pipe_ros, X_test, Y_test, "Theory_Lasso_ros_Test"
-)
-
 #SMOTE----------------------------------------------------------------------
 #建立 SMOTE 採樣器
 smote = SMOTE(random_state=42)
@@ -279,16 +232,6 @@ for sc in scorers:
         'best_C': best_c
     }
 
-# 訓練理論模型
-theory_lasso_pipe_smote= Pipeline([
-    ('scaler', StandardScaler()),
-    ('model', LogisticRegression(penalty='l1', solver='liblinear', C=c_theory))
-])
-theory_lasso_pipe_smote.fit(X_train_smote, Y_train_smote)
-
-theory_smote_metrics, theory_smote_cm = get_metrics(
-    theory_lasso_pipe_smote, X_test, Y_test, "Theory_Lasso_smote_Test"
-)
 
 #Class-weight Adjustment------------------------------------------
 #修改Pipeline：在 LogisticRegression 中加入 class_weight='balanced'
@@ -297,8 +240,8 @@ weighted_results = {}
 pipe_weighted = Pipeline([
     ('scaler', StandardScaler()),
     ('model', LogisticRegression(
-        penalty='l1', 
-        solver='liblinear', 
+        penalty='l2', 
+        solver='lbfgs', 
         class_weight='balanced', # <---(以樣本Y=1之比例進行加權)
         random_state=1
     ))
@@ -315,7 +258,7 @@ for sc in scorers:
     best_c = gs.best_params_['model__C']
     
     
-    metrics, cm = get_metrics(best_model, X_test, Y_test, f"Lasso_Weighted_{sc}")
+    metrics, cm = get_metrics(best_model, X_test, Y_test, f"Ridge_Weighted_{sc}")
     
     
     weighted_results[sc] = {
@@ -325,20 +268,9 @@ for sc in scorers:
         'best_C': best_c
     }
 
-# 訓練理論模型
-theory_lasso_pipe_weighted = Pipeline([
-    ('scaler', StandardScaler()),
-    ('model', LogisticRegression(penalty='l1', solver='liblinear',class_weight='balanced', C=c_theory))
-])
-theory_lasso_pipe_weighted.fit(X_train, Y_train)
-
-theory_weighted_metrics, theory_weighted_cm = get_metrics(
-    theory_lasso_pipe_weighted, X_test, Y_test, "Theory_Lasso_Weighted_Test"
-)
-
 
 #==============印出調整過後的結果==============
-def compile_summary_table(all_results_dicts, theory_results_list):
+def compile_summary_table(all_results_dicts):
     summary_data = []
 
     # 處理 CV 最佳化模型 (ROS, SMOTE, Weighted)
@@ -362,34 +294,41 @@ def compile_summary_table(all_results_dicts, theory_results_list):
                 'F1-score': m.get('f1-score', m.get('F1-score', 0))
             })
 
-    # 處理各方法的理論模型
-    for t_name, t_metrics, t_pipe in theory_results_list:
-        coef_t = t_pipe.named_steps['model'].coef_[0]
-        num_vars_t = np.sum(coef_t != 0)
-
-        summary_data.append({
-            'Method': t_name,
-            'Scoring': 'Theory',
-            'Best_C': t_pipe.named_steps['model'].C,
-            'Selected_Vars': num_vars_t,
-            'Accuracy': t_metrics.get('accuracy', t_metrics.get('Accuracy', 0)),
-            'Precision': t_metrics.get('precision', t_metrics.get('Precision', 0)),
-            'Recall': t_metrics.get('recall', t_metrics.get('Recall', 0)),
-            'F1-score': t_metrics.get('f1-score', t_metrics.get('F1-score', 0))
-        })
-
     return pd.DataFrame(summary_data)
 
-# 執行彙整
+#彙整
 all_dicts = {'ROS': ros_results, 'SMOTE': smote_results, 'Weighted': weighted_results}
-theory_list = [
-    ('ROS', theory_ros_metrics, theory_lasso_pipe_ros),
-    ('SMOTE', theory_smote_metrics, theory_lasso_pipe_smote), 
-    ('Weighted', theory_weighted_metrics, theory_lasso_pipe_weighted)
-]
 
-summary_df = compile_summary_table(all_dicts, theory_list)
+
+summary_df = compile_summary_table(all_dicts)
 
 
 print("\n" + "="*40 + " Exercise 2 綜合績效比較表 " + "="*40)
 display(summary_df.sort_values(by=['Method', 'F1-score'], ascending=[True, False]))
+
+#混淆矩陣==============================
+
+def plot_all_cms(results_dict, method_name):
+    # 設定畫布
+    fig, axes = plt.subplots(1, 3, figsize=(20, 4))
+    fig.suptitle(f'Confusion Matrices: {method_name} Method', fontsize=16, fontweight='bold')
+    
+    scorings = ['accuracy', 'neg_log_loss', 'f1']
+    
+    #畫出三個CV最佳化模型的CM
+    for i, sc in enumerate(scorings):
+        cm = results_dict[sc]['cm']
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[i])
+        axes[i].set_title(f'CV Optimized ({sc})')
+        axes[i].set_xlabel('Predicted')
+        axes[i].set_ylabel('Actual')
+    
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.85)
+    plt.show()
+
+#執行
+plot_all_cms(ros_results, "ROS")
+plot_all_cms(smote_results, "SMOTE")
+plot_all_cms(weighted_results, "Weighted")
